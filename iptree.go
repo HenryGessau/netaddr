@@ -118,6 +118,8 @@ func (t *ipTree) remove() *ipTree {
 			} else {
 				t.up.setRight(newChild)
 			}
+		//} else if newChild != nil {
+		//	newChild.up = nil
 		}
 		return newChild
 	}
@@ -142,12 +144,12 @@ func (t *ipTree) removeNet(net *net.IPNet) (top *ipTree) {
 	if t == nil {
 		return
 	}
-	// If net starts before me.net, recursively remove net from the left
+	// If net starts before t.net, recursively remove net from the left
 	if bytes.Compare(net.IP, t.net.IP) < 0 {
 		t.left = t.left.removeNet(net)
 	}
 
-	// If any CIDRs in `net - me.net` come after me.net, remove net from
+	// If any CIDRs in `net - t.net` come after t.net, remove net from
 	// the right
 	diff := netDifference(net, t.net)
 	for _, n := range diff {

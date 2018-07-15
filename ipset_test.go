@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"fmt"
 )
 
 var (
@@ -376,4 +377,93 @@ func TestIPSetAllocateDeallocate(t *testing.T) {
 		assert.False(t, allocated.Contains(ip))
 	}
 	assert.Equal(t, 51036, len(ips))
+}
+
+func TestRemoveBroadcast(t *testing.T) {
+	all := IPSet{}
+	totalAddrs := 8
+	firstAddr := fmt.Sprintf("10.0.0.0")
+	lastAddr := fmt.Sprintf("10.0.0.%d", totalAddrs-1)
+	networkIPAddr := net.ParseIP(firstAddr)
+	broadcastIPAddr := net.ParseIP(lastAddr)
+
+	var addr string
+
+	for i := 0; i < totalAddrs; i++ {
+		addr = fmt.Sprintf("10.0.0.%d", i)
+		all.Insert(net.ParseIP(addr))
+	}
+
+	ips := all.GetIPs(0)
+	fmt.Printf("[0] IPs: %s\n", ips)
+
+	for i := 1; i < (totalAddrs-1); i++ {
+		if i == 3 { // Leave one address in the set
+			continue
+		}
+		addr = fmt.Sprintf("10.0.0.%d", i)
+		all.Remove(net.ParseIP(addr))
+		ips = all.GetIPs(0)
+		fmt.Printf("Removed %s, IPs: %s\n", addr, ips)
+	}
+
+	all.Remove(networkIPAddr)
+	ips = all.GetIPs(0)
+	fmt.Printf("Removed %s, IPs: %s\n", firstAddr, ips)
+
+	all.Remove(broadcastIPAddr)
+	containsBroadcast := all.Contains(broadcastIPAddr)
+	assert.False(t, containsBroadcast)
+
+	ips = all.GetIPs(0)
+	fmt.Printf("Removed %s, IPs: %s\n", lastAddr, ips)
+	//assert.Equal(t, 1, len(ips))
+}
+
+func TestIPSet_GetIPsScenario(t *testing.T) {
+	all := IPSet{}
+	totalAddresses := 8
+	theOneAddress := 3
+	networkAddress := fmt.Sprintf("10.0.0.0")
+	broadcastAddress := fmt.Sprintf("10.0.0.%d", totalAddresses-1)
+
+	// Insert all addresses, including network and broadcast
+	for i := 0; i < totalAddresses; i++ {
+		all.Insert(net.ParseIP(fmt.Sprintf("10.0.0.%d", i)))
+	}
+
+	// Remove all host addresses except one
+	for i := 1; i < (totalAddresses -1); i++ {
+		if i != theOneAddress {
+			all.Remove(net.ParseIP(fmt.Sprintf("10.0.0.%d", i)))
+		}
+	}
+
+	all.Remove(net.ParseIP(networkAddress))
+	all.Remove(net.ParseIP(broadcastAddress))
+
+	for i := 0; i < totalAddresses; i++ {
+		ip := net.ParseIP(fmt.Sprintf("10.0.0.%d", i))
+		assert.Equal(t, i == theOneAddress, all.Contains(ip))
+	}
+
+	ips := all.GetIPs(0)
+	assert.Equal(t, 1, len(ips))
+}
+
+func TestIPSet_RemoveCornerCase(t *testing.T) {
+	testSet := IPSet{}
+	ip1 := net.ParseIP("10.0.0.1")
+	ip2 := net.ParseIP("10.0.0.2")
+
+	testSet.Insert(ip2) // top
+	testSet.Insert(ip1) // inserted at left
+	testSet.Remove(ip2) // remove top node
+
+	assert.True(t, testSet.Contains(ip1))
+	assert.False(t, testSet.Contains(ip2))
+	assert.Nil(t, testSet.tree.next())
+
+	ips := testSet.GetIPs(0)
+	assert.Equal(t, 1, len(ips))
 }
