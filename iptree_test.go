@@ -21,7 +21,7 @@ func TestValidateNoNetwork(t *testing.T) {
 }
 
 func TestValidateBadCidrBadUp(t *testing.T) {
-	_, ten24, _ := net.ParseCIDR("10.0.0.0/24")
+	ten24, _ := ParseIPNet("10.0.0.0/24")
 	ten24.IP = net.ParseIP("10.0.0.1")
 	tree := &ipTree{
 		net: ten24,

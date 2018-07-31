@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"math/big"
-	"net"
 )
 
 type ipTree struct {
-	net             *net.IPNet
+	net             *IPNet
 	left, right, up *ipTree
 }
 
@@ -42,7 +41,7 @@ func (t *ipTree) trimLeft(top *ipTree) *ipTree {
 		return nil
 	}
 
-	if containsNet(top.net, t.net) {
+	if top.net.ContainsNet(t.net) {
 		return t.left.trimLeft(top)
 	}
 	t.setRight(t.right.trimLeft(top))
@@ -55,7 +54,7 @@ func (t *ipTree) trimRight(top *ipTree) *ipTree {
 		return nil
 	}
 
-	if containsNet(top.net, t.net) {
+	if top.net.ContainsNet(t.net) {
 		return t.right.trimRight(top)
 	}
 	t.setLeft(t.left.trimRight(top))
@@ -71,11 +70,11 @@ func (t *ipTree) insert(newNode *ipTree) *ipTree {
 		return newNode
 	}
 
-	if containsNet(t.net, newNode.net) {
+	if t.net.ContainsNet(newNode.net) {
 		return t
 	}
 
-	if containsNet(newNode.net, t.net) {
+	if newNode.net.ContainsNet(t.net) {
 		// Replace the current top node and trim the tree
 		newNode.setLeft(t.left.trimLeft(newNode))
 		newNode.setRight(t.right.trimRight(newNode))
@@ -98,10 +97,10 @@ func (t *ipTree) contains(newNode *ipTree) bool {
 		return false
 	}
 
-	if containsNet(t.net, newNode.net) {
+	if t.net.ContainsNet(newNode.net) {
 		return true
 	}
-	if containsNet(newNode.net, t.net) {
+	if newNode.net.ContainsNet(t.net) {
 		return false
 	}
 	if bytes.Compare(newNode.net.IP, t.net.IP) < 0 {
@@ -141,7 +140,7 @@ func (t *ipTree) remove() *ipTree {
 }
 
 // removeNet removes all of the IPs in the given net from the set
-func (t *ipTree) removeNet(net *net.IPNet) (top *ipTree) {
+func (t *ipTree) removeNet(net *IPNet) (top *ipTree) {
 	if t == nil {
 		return
 	}
@@ -152,7 +151,7 @@ func (t *ipTree) removeNet(net *net.IPNet) (top *ipTree) {
 
 	// If any CIDRs in `net - me.net` come after me.net, remove net from
 	// the right
-	diff := netDifference(net, t.net)
+	diff := net.Difference(t.net)
 	for _, n := range diff {
 		if bytes.Compare(t.net.IP, n.IP) < 0 {
 			t.right = t.right.removeNet(net)
@@ -161,11 +160,11 @@ func (t *ipTree) removeNet(net *net.IPNet) (top *ipTree) {
 	}
 
 	top = t
-	if containsNet(net, t.net) {
+	if net.ContainsNet(t.net) {
 		// Remove the current node
 		top = t.remove()
-	} else if containsNet(t.net, net) {
-		diff = netDifference(t.net, net)
+	} else if t.net.ContainsNet(net) {
+		diff = t.net.Difference(net)
 		t.net = diff[0]
 		for _, n := range diff[1:] {
 			top = top.insert(&ipTree{net: n})

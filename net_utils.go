@@ -8,9 +8,31 @@ import (
 	"strings"
 )
 
+type IPNet struct {
+	*net.IPNet
+}
+
+type NetworkOperations interface {
+	Size() *big.Int
+	NetworkAddr() net.IP
+	BroadcastAddr() net.IP
+	ContainsNet(m *IPNet) bool
+	Difference(m *IPNet) []*IPNet
+	DivideInHalf() (a, b *IPNet)
+	CanCombineWith(m *IPNet) (ok bool, newNet *IPNet)
+	Expand(limit int) []net.IP
+}
+
 // NetSize returns the size of the given IPNet in terms of the number of
 // addresses. It always includes the network and broadcast addresses.
 func NetSize(n *net.IPNet) *big.Int {
+	ipNet := IPNet{n}
+	return ipNet.Size()
+}
+
+// IPNetSize returns the size of the given IPNet in terms of the number of
+// addresses. It always includes the network and broadcast addresses.
+func (n *IPNet) Size() *big.Int {
 	ones, bits := n.Mask.Size()
 	return big.NewInt(0).Lsh(big.NewInt(1), uint(bits-ones))
 }
@@ -34,10 +56,21 @@ func ParseNet(cidr string) (parsed *net.IPNet, err error) {
 		return nil, err
 	}
 	if !ip.Equal(parsed.IP) {
-		err = fmt.Errorf("Host part is not zero")
+		err = fmt.Errorf("host part is not zero")
 		return nil, err
 	}
 	return
+}
+
+// ParseIPNet parses an IP network from a CIDR. Unlike net.ParseCIDR, it does not
+// allow a CIDR where the host part is non-zero. For example, the following
+// CIDRs will result in an error: 203.0.113.1/24, 2001:db8::1/64, 10.0.20.0/20
+func ParseIPNet(cidr string) (parsed *IPNet, err error) {
+	parsedNet, err := ParseNet(cidr)
+	if err != nil {
+		return nil, err
+	}
+	return &IPNet{parsedNet}, err
 }
 
 // NewIP returns a new IP with the given size. The size must be 4 for IPv4 and
@@ -57,8 +90,19 @@ func NetworkAddr(n *net.IPNet) net.IP {
 	return n.IP
 }
 
+// NetworkAddr returns the first address in the given network, or the network address.
+func (n *IPNet) NetworkAddr() net.IP {
+	return n.IP
+}
+
 // BroadcastAddr returns the last address in the given network, or the broadcast address.
 func BroadcastAddr(n *net.IPNet) net.IP {
+	ipNet := IPNet{n}
+	return ipNet.BroadcastAddr()
+}
+
+// BroadcastAddr returns the last address in the given network, or the broadcast address.
+func (n *IPNet) BroadcastAddr() net.IP {
 	// The golang net package doesn't make it easy to calculate the broadcast address. :(
 	broadcast := NewIP(len(n.IP))
 	for i := 0; i < len(n.IP); i++ {
@@ -67,51 +111,51 @@ func BroadcastAddr(n *net.IPNet) net.IP {
 	return broadcast
 }
 
-// containsNet returns true if net2 is a subset of net1. To be clear, it
-// returns true if net1 == net2 also.
-func containsNet(net1, net2 *net.IPNet) bool {
+// ContainsNet returns true if inner is a subset of n. To be clear, it
+// returns true if n == inner also.
+func (n *IPNet) ContainsNet(inner *IPNet) bool {
 	// If the two networks are different IP versions, return false
-	if len(net1.IP) != len(net2.IP) {
+	if len(n.IP) != len(inner.IP) {
 		return false
 	}
-	if !net1.Contains(net2.IP) {
+	if !n.IPNet.Contains(inner.IP) {
 		return false
 	}
-	if !net1.IP.Equal(net2.IP) {
+	if !n.IP.Equal(inner.IP) {
 		return true
 	}
-	return bytes.Compare(net1.Mask, net2.Mask) <= 0
+	return bytes.Compare(n.Mask, inner.Mask) <= 0
 }
 
-// netDifference returns the set difference a - b. It returns the list of CIDRs
+// Difference returns the set difference n - m. It returns the list of CIDRs
 // in order from largest to smallest. They are *not* sorted by network IP.
-func netDifference(a, b *net.IPNet) (result []*net.IPNet) {
-	// If the two networks are different IP versions, return a
-	if len(a.IP) != len(b.IP) {
-		return []*net.IPNet{a}
+func (n *IPNet) Difference(m *IPNet) (result []*IPNet) {
+	// If the two networks are different IP versions, return n
+	if len(n.IP) != len(m.IP) {
+		return []*IPNet{n}
 	}
 
-	// If b contains a then the difference is empty
-	if containsNet(b, a) {
+	// If m contains n then the difference is empty
+	if m.ContainsNet(n) {
 		return
 	}
-	// If a doesn't contain b then the difference is equal to a
-	if !containsNet(a, b) {
-		return []*net.IPNet{a}
+	// If n doesn't contain m then the difference is equal to n
+	if !n.ContainsNet(m) {
+		return []*IPNet{n}
 	}
 
 	// If two nets overlap then one must contain the other. At this point, we
-	// know a contains b and b is smaller than a. Cut a in half and recurse on
+	// know n contains m and m is smaller than n. Cut n in half and recurse on
 	// the one that overlaps
-	first, second := divideNetInHalf(a)
-	if bytes.Compare(b.IP, second.IP) < 0 {
-		return append([]*net.IPNet{second}, netDifference(first, b)...)
+	first, second := n.DivideInHalf()
+	if bytes.Compare(m.IP, second.IP) < 0 {
+		return append([]*IPNet{second}, first.Difference(m)...)
 	}
-	return append([]*net.IPNet{first}, netDifference(second, b)...)
+	return append([]*IPNet{first}, second.Difference(m)...)
 }
 
-// divideNetInHalf returns the given net as two equally sized halves
-func divideNetInHalf(n *net.IPNet) (a, b *net.IPNet) {
+// DivideInHalf returns the given net as two equally sized halves
+func (n *IPNet) DivideInHalf() (a, b *IPNet) {
 	// Get the size of the original netmask
 	ones, bits := n.Mask.Size()
 
@@ -131,24 +175,24 @@ func divideNetInHalf(n *net.IPNet) (a, b *net.IPNet) {
 		ip[i] = mask[i] & (n.IP[i] | extraOne)
 	}
 
-	a = &net.IPNet{IP: n.IP, Mask: mask}
-	b = &net.IPNet{IP: ip, Mask: mask}
+	a = &IPNet{&net.IPNet{IP: n.IP, Mask: mask}}
+	b = &IPNet{&net.IPNet{IP: ip, Mask: mask}}
 	return
 }
 
-// canCombineNets returns true if the two networks, a and b, can be combined
+// CanCombineWith returns true if the network n can be combined with m
 // into one larger cidr twice the size. If true, it returns the combined
 // network.
-func canCombineNets(a, b *net.IPNet) (ok bool, newNet *net.IPNet) {
-	if a.IP.Equal(b.IP) {
+func (n *IPNet) CanCombineWith(m *IPNet) (ok bool, newNet *IPNet) {
+	if n.IP.Equal(m.IP) {
 		return
 	}
-	if bytes.Compare(a.Mask, b.Mask) != 0 {
+	if bytes.Compare(n.Mask, m.Mask) != 0 {
 		return
 	}
-	ones, bits := a.Mask.Size()
-	newNet = &net.IPNet{IP: a.IP, Mask: net.CIDRMask(ones-1, bits)}
-	if newNet.Contains(b.IP) {
+	ones, bits := n.Mask.Size()
+	newNet = &IPNet{&net.IPNet{IP: n.IP, Mask: net.CIDRMask(ones-1, bits)}}
+	if newNet.ContainsNet(m) {
 		ok = true
 		return
 	}
@@ -182,9 +226,9 @@ func incrementIP(ip net.IP) (result net.IP) {
 	return
 }
 
-// expandNet returns a slice containing all of the IPs in the given net up to
+// Expand returns a slice containing all of the IPs in the net up to
 // the given limit
-func expandNet(n *net.IPNet, limit int) []net.IP {
+func (n *IPNet) Expand(limit int) []net.IP {
 	ones, bits := n.Mask.Size()
 
 	size := limit
